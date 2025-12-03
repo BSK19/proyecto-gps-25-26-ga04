@@ -1,0 +1,311 @@
+openapi: 3.0.0
+info:
+  title: UnderSounds — Estadísticas y Recomendaciones
+  version: "1.0.0"
+  description: "Endpoints expuestos por `stats-service`."
+servers:
+  - url: http://localhost:5002/api
+
+paths:
+  /stats/events:
+    post:
+      summary: Enviar evento de usuario (ingesta)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Event'
+      responses:
+        "202":
+          description: Evento aceptado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accepted:
+                    type: boolean
+                    example: true
+                  id:
+                    type: string
+        "400":
+          description: Petición inválida
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  detail:
+                    type: string
+        "500":
+          description: Error interno
+
+  /stats/artist/{artist_id}/kpis:
+    get:
+      summary: KPIs resumidos para un artista
+      parameters:
+        - in: path
+          name: artist_id
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: startDate
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: endDate
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: KPIs agregados (plays, likes, follows, purchases, revenue)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArtistKPI'
+        "400":
+          description: Formato de fecha inválido
+        "404":
+          description: Artista no encontrado
+
+  /stats/trending:
+    get:
+      summary: Tendencias por género o global (heurística)
+      parameters:
+        - in: query
+          name: genre
+          schema:
+            type: string
+            description: "Si 'tracks' o 'artists' devuelve listas específicas"
+        - in: query
+          name: period
+          schema:
+            type: string
+            enum: [day, week, month]
+            default: week
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 10
+      responses:
+        "200":
+          description: Lista de tendencias (tracks o artists según `genre`)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+
+  /stats/alerts:
+    post:
+      summary: Crear alerta/trigger manual para un artista
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                artistId:
+                  type: string
+                windowMinutes:
+                  type: integer
+                thresholds:
+                  type: object
+                notifyEmail:
+                  type: string
+      responses:
+        "200":
+          description: Resultado de evaluación de umbrales / envío de email
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /stats/cache/clear:
+    post:
+      summary: Limpiar caché (todo o clave específica)
+      parameters:
+        - in: query
+          name: key
+          schema:
+            type: string
+          description: "Clave de caché a limpiar (opcional)"
+      responses:
+        "200":
+          description: Resultado de limpieza
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  cleared:
+                    type: string
+
+  /stats/cache/info:
+    get:
+      summary: Información del caché interno
+      responses:
+        "200":
+          description: Estadísticas del caché
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  current_size:
+                    type: integer
+                  max_size:
+                    type: integer
+                  ttl_seconds:
+                    type: integer
+                  keys:
+                    type: array
+                    items:
+                      type: string
+
+  /stats/cb/status:
+    get:
+      summary: Estado del circuit breaker usado para llamadas al content service
+      responses:
+        "200":
+          description: Estado y contadores del circuit breaker
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  state:
+                    type: string
+                    description: "Nombre del estado del circuit breaker (ej: Closed, Open, HalfOpen)."
+                    example: "Closed"
+                  fail_count:
+                    description: "Contador de fallos acumulados (puede ser integer o string según la implementación)."
+                    oneOf:
+                      - type: integer
+                      - type: string
+                    example: 0
+                  fail_max:
+                    type: integer
+                    description: "Número de fallos necesarios para abrir el circuito."
+                    example: 5
+                  reset_timeout:
+                    description: "Timeout de reset en segundos (puede venir como entero o representación interna)."
+                    oneOf:
+                      - type: integer
+                      - type: string
+                    example: 30
+                  opened_at:
+                    type: string
+                    nullable: true
+                    description: "Timestamp ISO de apertura del circuito o null."
+                    example: "2025-11-27T12:34:56.789000"
+        "500":
+          description: Error interno
+
+  /recommendations/user/{user_id}:
+    get:
+      summary: Recomendaciones heurísticas para un usuario
+      parameters:
+        - in: path
+          name: user_id
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 20
+      responses:
+        "200":
+          description: Recomendaciones (lista)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+
+  /recommendations/similar:
+    get:
+      summary: Recomendaciones similares por género
+      parameters:
+        - in: query
+          name: genre
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: excludeId
+          schema:
+            type: string
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 10
+      responses:
+        "200":
+          description: Lista de ítems similares
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+
+components:
+  schemas:
+    Event:
+      type: object
+      properties:
+        eventType:
+          type: string
+          example: "track.played"
+        timestamp:
+          type: string
+          format: date-time
+        userId:
+          type: string
+          nullable: true
+        anonymous:
+          type: boolean
+          example: false
+        entityType:
+          type: string
+          nullable: true
+        entityId:
+          type: string
+          nullable: true
+        metadata:
+          type: object
+          additionalProperties: true
+
+    ArtistKPI:
+      type: object
+      properties:
+        artistId:
+          type: string
+        period:
+          type: string
+          nullable: true
+        plays:
+          type: integer
+        uniqueListeners:
+          type: integer
+        likes:
+          type: integer
+        follows:
+          type: integer
+        purchases:
+          type: integer
+        revenue:
+          type: number
+          format: float

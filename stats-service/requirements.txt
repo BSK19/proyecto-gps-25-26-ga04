@@ -1,0 +1,12 @@
+fastapi
+uvicorn[standard]
+motor
+httpx
+PyYAML
+python-dotenv
+aiobreaker
+slowapi
+cachetools
+psutil
+tenacity
+structlog

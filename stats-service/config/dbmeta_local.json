@@ -1,0 +1,7 @@
+{
+  "dbVersion": 42,
+  "colecciones": [
+    "artist_kpis",
+    "events"
+  ]
+}
