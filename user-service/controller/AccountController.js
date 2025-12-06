@@ -7,6 +7,7 @@ const nodemailer = require('nodemailer');
 const axios = require('axios');
 const { withRetry } = require('../utils/httpRetry');
 const logger = require('../utils/logger');
+const mongoose = require('mongoose');
 
 const CONTENT_SERVICE_URL = process.env.CONTENT_SERVICE_URL || 'http://localhost:5001/api';
 const SERVICE_API_KEY = process.env.SERVICE_API_KEY || '';
@@ -78,6 +79,36 @@ async function fetchArtistRemoteById(artistId) {
   }
 }
 
+/* -------- SANITIZERS / VALIDATORS -------- */
+const ALLOWED_PROFILE_UPDATES = new Set([
+  'username',
+  'profileImage',
+  'bannerImage',
+  'bio',
+  'socialLinks',
+  'bandName',
+  'genre',
+  'website',
+  'followers',
+  'purchaseHistory',
+  'likedTracks',
+  'following'
+]);
+
+function sanitize(obj, allowedSet) {
+  const out = {};
+  if (!obj || typeof obj !== 'object') return out;
+  for (const k of Object.keys(obj)) {
+    if (allowedSet.has(k)) out[k] = obj[k];
+  }
+  return out;
+}
+
+function isValidId(id) {
+  return id && (typeof id === 'string' || id instanceof mongoose.Types.ObjectId) && mongoose.Types.ObjectId.isValid(String(id));
+}
+
+/* -------- CONTROLLER -------- */
 class AccountController {
 
   async register(req, res) {
@@ -171,7 +202,7 @@ class AccountController {
         { expiresIn: '15m' }
       );
       const refreshToken = jwt.sign(
-        { id: account._id },
+        { id: account.__id },
         process.env.REFRESH_TOKEN_SECRET,
         { expiresIn: '7d' }
       );
@@ -260,6 +291,7 @@ class AccountController {
   async getAccountType(req, res) {
     try {
       const { id } = req.params;
+      if (!isValidId(id)) return res.status(400).json({ error: 'ID inválido' });
       const account = await AccountDao.findById(id);
       if (!account) {
         return res.status(404).json({ error: 'Cuenta no encontrada' });
@@ -273,7 +305,17 @@ class AccountController {
   async updateProfile(req, res) {
     try {
       const { id } = req.params;
-      const updatedAccount = await AccountDao.update(id, req.body);
+      if (!isValidId(id)) return res.status(400).json({ success: false, error: 'ID inválido' });
+
+      // Saneado: sólo campos permitidos
+      const sanitized = sanitize(req.body, ALLOWED_PROFILE_UPDATES);
+      if (Object.keys(sanitized).length === 0) {
+        return res.status(400).json({ success: false, error: 'No hay campos válidos para actualizar' });
+      }
+
+      const updatedAccount = await AccountDao.update(id, sanitized);
+      if (!updatedAccount) return res.status(404).json({ success: false, error: 'Cuenta no encontrada' });
+
       // Retorna un objeto que incluya success y el dto actualizado
       res.json({ success: true, account: new AccountDTO(updatedAccount) });
     } catch (error) {
@@ -353,6 +395,8 @@ class AccountController {
   async linkBandToArtist(req, res) {
     try {
       const { accountId } = req.params;
+      if (!isValidId(accountId)) return res.status(400).json({ error: 'ID inválido' });
+
       const account = await AccountDao.findById(accountId);
 
       if (!account) {
@@ -400,23 +444,28 @@ class AccountController {
 
   async toggleFollow(req, res) {
     try {
-      const userId = req.user.id; // Viene del middleware de auth
+      const userId = req.user?.id; // Viene del middleware de auth
       const { artistId } = req.body;
-      
+
+      if (!isValidId(userId)) return res.status(400).json({ error: 'User ID inválido' });
+      if (!artistId || (typeof artistId === 'object')) return res.status(400).json({ error: 'Artist ID inválido' });
+
       const account = await AccountDao.findById(userId);
+      if (!account) return res.status(404).json({ error: 'Cuenta no encontrada' });
+
       const isFollowing = Boolean(account.following?.includes(String(artistId)));
-      
+
       let updatedAccount;
       if (isFollowing) {
         updatedAccount = await AccountDao.unfollowArtist(userId, artistId);
       } else {
         updatedAccount = await AccountDao.followArtist(userId, artistId);
       }
-      
-      res.json({ 
-        success: true, 
-        following: !isFollowing, 
-        list: updatedAccount.following 
+
+      res.json({
+        success: true,
+        following: !isFollowing,
+        list: updatedAccount.following
       });
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -425,23 +474,28 @@ class AccountController {
 
   async toggleLike(req, res) {
     try {
-      const userId = req.user.id;
+      const userId = req.user?.id;
       const { trackId } = req.body;
-      
+
+      if (!isValidId(userId)) return res.status(400).json({ error: 'User ID inválido' });
+      if (!trackId || (typeof trackId === 'object')) return res.status(400).json({ error: 'Track ID inválido' });
+
       const account = await AccountDao.findById(userId);
+      if (!account) return res.status(404).json({ error: 'Cuenta no encontrada' });
+
       const isLiked = Boolean(account.likedTracks?.includes(String(trackId)));
-      
+
       let updatedAccount;
       if (isLiked) {
         updatedAccount = await AccountDao.unlikeTrack(userId, trackId);
       } else {
         updatedAccount = await AccountDao.likeTrack(userId, trackId);
       }
-      
-      res.json({ 
-        success: true, 
-        liked: !isLiked, 
-        list: updatedAccount.likedTracks 
+
+      res.json({
+        success: true,
+        liked: !isLiked,
+        list: updatedAccount.likedTracks
       });
     } catch (error) {
       res.status(500).json({ error: error.message });
